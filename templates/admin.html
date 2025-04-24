@@ -1,0 +1,364 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Panel de Administración</title>
+    <link rel="stylesheet" href="/static/styles.css">
+    <style>
+        .delete-user {
+            color: #e74c3c;
+            cursor: pointer;
+            margin-left: 10px;
+        }
+        .delete-user:hover {
+            color: #c0392b;
+        }
+        .qr-container {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 20px;
+            margin-bottom: 20px;
+        }
+        .qr-card {
+            background: white;
+            border-radius: 8px;
+            padding: 15px;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+            text-align: center;
+            flex: 1 1 200px;
+            max-width: 250px;
+        }
+        .qr-card img {
+            max-width: 100%;
+            height: auto;
+            margin: 10px 0;
+        }
+        .qr-card h3 {
+            margin-top: 0;
+            color: var(--primary-color);
+        }
+        .user-preview {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        .user-preview img {
+            max-width: 100px;
+            height: auto;
+            border-radius: 4px;
+            border: 1px solid #ddd;
+        }
+        .user-qr {
+            max-width: 80px;
+            height: auto;
+        }
+    </style>
+</head>
+<body>
+    <div class="navbar">
+        <div class="navbar-container">
+            <a href="/admin" class="navbar-brand">Panel de Administración</a>
+            <ul class="navbar-nav">
+                <li class="nav-item"><a href="/admin/preview" class="nav-link">Simulador de Pantallas</a></li>
+                <li class="nav-item"><a href="/" class="nav-link">Página Principal</a></li>
+            </ul>
+        </div>
+    </div>
+    
+    <div class="container">
+        <h2>Panel de Administración</h2>
+        
+        <div class="qr-container">
+            <div class="qr-card">
+                <h3>QR Wi-Fi</h3>
+                <img src="{{ qr_wifi }}" alt="QR Wi-Fi">
+                <p>Escanea para conectarte a la red</p>
+            </div>
+            
+            <div class="qr-card">
+                <h3>QR Link de Registro</h3>
+                <img src="{{ qr_link }}" alt="QR Link">
+                <p>Escanea para registrarte</p>
+            </div>
+        </div>
+        
+        <div class="card mb-4">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <h3 class="mb-0">Usuarios</h3>
+                <div>
+                    <input type="text" id="search-users" placeholder="Buscar usuario..." class="w-auto">
+                    <button id="refresh-btn" class="btn">↻ Actualizar</button>
+                </div>
+            </div>
+            <div class="card-body">
+                <div id="location-status"></div>
+                <div class="table-responsive">
+                    <table id="users-table">
+                        <thead>
+                            <tr>
+                                <th>Nombre</th>
+                                <th>Lat / Lon</th>
+                                <th>Distancia</th>
+                                <th>Dimensiones</th>
+                                <th>HTML</th>
+                                <th>Vista previa</th>
+                                <th>Acciones</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% if usuarios and usuarios|length > 0 %}
+                            {% for nombre, datos in usuarios.items() %}
+                            <tr>
+                                <td>{{ nombre }}</td>
+                                <td>{{ datos.get('lat', '-') }} / {{ datos.get('lon', '-') }}</td>
+                                <td></td>
+                                <td>
+                                    {% if datos.get('pantalla') %}
+                                        {{ datos.get('pantalla').get('ancho', '-') }}x{{ datos.get('pantalla').get('alto', '-') }} px
+                                    {% else %}
+                                        -
+                                    {% endif %}
+                                </td>
+                                <td>
+                                    <form method="post" action="/enviar-html">
+                                        <input type="hidden" name="nombre" value="{{ nombre }}">
+                                        <textarea name="html" rows="2" class="w-100 mb-2">{{ datos.get('html', '') }}</textarea>
+                                        <button type="submit" class="btn">Guardar</button>
+                                    </form>
+                                </td>
+                                <td>
+                                    <div class="user-preview">
+                                        <img src="/imagenes/{{ nombre }}.jpg?t={{ timestamp }}" 
+                                             alt="Vista de {{ nombre }}" class="user-img">
+                                        <img src="{{ datos.qr_url }}" 
+                                             alt="Código QR de {{ datos.nombre }}" 
+                                             class="user-qr">
+                                    </div>
+                                </td>
+                                <td>
+                                    <a href="/ver-html/{{ nombre }}" target="_blank" class="btn btn-sm">Ver</a>
+                                    <span class="delete-user" data-nombre="{{ nombre }}">🗑️ Eliminar</span>
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        {% else %}
+                            <tr>
+                                <td colspan="7" class="text-center">No hay usuarios registrados</td>
+                            </tr>
+                        {% endif %}
+                        
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+        
+        <div class="card mb-4">
+            <div class="card-header">
+                <h3 class="mb-0">HTML por defecto</h3>
+            </div>
+            <div class="card-body">
+                <form method="post" action="/html-por-defecto">
+                    <textarea name="html" rows="4" class="w-100 mb-3">{{ html_por_defecto }}</textarea>
+                    <button type="submit" class="btn">Actualizar HTML por defecto</button>
+                </form>
+            </div>
+        </div>
+        
+        <form id="host-form" class="mb-4">
+            <button type="submit" class="btn btn-success">Actualizar ubicación del Admin</button>
+        </form>
+    </div>
+    
+    <script>
+    document.addEventListener("DOMContentLoaded", () => {
+        const hostForm = document.getElementById("host-form");
+        const searchInput = document.getElementById("search-users");
+        const refreshBtn = document.getElementById("refresh-btn");
+        const deleteButtons = document.querySelectorAll(".delete-user");
+
+        // SSE for live updates
+        const sse = new EventSource("/sse/admin");
+        sse.onmessage = (e) => {
+            if (e.data === "recargar") {
+                location.reload();
+            }
+        };
+
+        // Update host location
+        if (hostForm) {
+            hostForm.addEventListener("submit", async (e) => {
+                e.preventDefault();
+
+                const statusEl = document.getElementById("location-status");
+                statusEl.textContent = "Updating location...";
+                statusEl.className = "alert alert-info";
+
+                try {
+                    navigator.geolocation.getCurrentPosition(
+                        async (pos) => {
+                            await fetch("/host", {
+                                method: "POST",
+                                headers: { "Content-Type": "application/json" },
+                                body: JSON.stringify({
+                                    lat: pos.coords.latitude,
+                                    lon: pos.coords.longitude,
+                                }),
+                            });
+
+                            statusEl.textContent = "Location updated successfully!";
+                            statusEl.className = "alert alert-success";
+
+                            // Refresh user list without reloading the page
+                            if (refreshBtn) {
+                                refreshBtn.click();
+                            }
+
+                            // Clear message after 3 seconds
+                            setTimeout(() => {
+                                statusEl.textContent = "";
+                                statusEl.className = "";
+                            }, 3000);
+                        },
+                        (error) => {
+                            statusEl.textContent = `Error getting location: ${error.message}`;
+                            statusEl.className = "alert alert-danger";
+
+                            // Clear message after 3 seconds
+                            setTimeout(() => {
+                                statusEl.textContent = "";
+                                statusEl.className = "";
+                            }, 3000);
+                        },
+                    );
+                } catch (error) {
+                    statusEl.textContent = `Error: ${error.message}`;
+                    statusEl.className = "alert alert-danger";
+
+                    // Clear message after 3 seconds
+                    setTimeout(() => {
+                        statusEl.textContent = "";
+                        statusEl.className = "";
+                    }, 3000);
+                }
+            });
+        }
+
+        // Filter user table
+        if (searchInput) {
+            searchInput.addEventListener("input", function () {
+                const query = this.value.toLowerCase();
+                const table = document.getElementById("users-table");
+                const rows = table.querySelectorAll("tbody tr");
+
+                rows.forEach((row) => {
+                    const nombre = row.querySelector("td:first-child").textContent.toLowerCase();
+                    if (nombre.includes(query)) {
+                        row.style.display = "";
+                    } else {
+                        row.style.display = "none";
+                    }
+                });
+            });
+        }
+
+        // Refresh button functionality
+        if (refreshBtn) {
+            refreshBtn.addEventListener("click", async () => {
+                const usersTable = document.getElementById("users-table");
+                const tbody = usersTable.querySelector("tbody");
+
+                try {
+                    const response = await fetch("/api/users");
+                    const users = await response.json();
+
+                    // Clear table
+                    tbody.innerHTML = "";
+
+                    // Rebuild table with fresh data
+                    users.forEach((user) => {
+                        const tr = document.createElement("tr");
+                        
+                        // Obtener dimensiones de pantalla
+                        let dimensiones = "-";
+                        if (user.pantalla) {
+                            dimensiones = `${user.pantalla.ancho}x${user.pantalla.alto} px`;
+                        }
+                        
+                        const timestamp = new Date().getTime();
+                        
+                        tr.innerHTML = `
+                            <td>${user.nombre}</td>
+                            <td>${user.lat || "-"} / ${user.lon || "-"}</td>
+                            <td>${user.distancia.toFixed(1)} m</td>
+                            <td>${dimensiones}</td>
+                            <td>
+                                <form method="post" action="/enviar-html">
+                                    <input type="hidden" name="nombre" value="${user.nombre}">
+                                    <textarea name="html" rows="2" class="w-100 mb-2">${user.html || ""}</textarea>
+                                    <button type="submit" class="btn">Guardar</button>
+                                </form>
+                            </td>
+                            <td>
+                                <div class="user-preview">
+                                    <img src="/imagenes/${user.nombre}.jpg?t=${timestamp}" alt="Vista de ${user.nombre}">
+                                    <img src="/qr/${user.nombre}" alt="QR de ${user.nombre}" class="user-qr">
+                                </div>
+                            </td>
+                            <td>
+                                <a href="/ver-html/${user.nombre}" target="_blank" class="btn btn-sm">Ver</a>
+                                <span class="delete-user" data-nombre="${user.nombre}">🗑️ Eliminar</span>
+                            </td>
+                        `;
+                        tbody.appendChild(tr);
+                        
+                        // Add event listener to new delete buttons
+                        tr.querySelector(".delete-user").addEventListener("click", handleDeleteUser);
+                    });
+                } catch (error) {
+                    console.error("Error refreshing user data:", error);
+                }
+            });
+        }
+        
+        // Delete user functionality
+        function handleDeleteUser() {
+            const nombre = this.dataset.nombre;
+            if (confirm(`¿Estás seguro de que deseas eliminar al usuario "${nombre}"?`)) {
+                deleteUser(nombre);
+            }
+        }
+        
+        async function deleteUser(nombre) {
+            try {
+                const response = await fetch(`/eliminar-usuario/${nombre}`, {
+                    method: "DELETE"
+                });
+                
+                const result = await response.json();
+                
+                if (result.status === "ok") {
+                    // Refresh the user list
+                    if (refreshBtn) {
+                        refreshBtn.click();
+                    }
+                } else {
+                    alert(`Error al eliminar usuario: ${result.mensaje}`);
+                }
+            } catch (error) {
+                console.error("Error deleting user:", error);
+                alert(`Error al eliminar usuario: ${error.message}`);
+            }
+        }
+        
+        // Add event listeners to delete buttons
+        deleteButtons.forEach(button => {
+            button.addEventListener("click", handleDeleteUser);
+        });
+    });
+
+    
+    </script>
+</body>
+</html>

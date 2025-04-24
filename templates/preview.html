@@ -1,0 +1,514 @@
+<!DOCTYPE html>
+<html lang="es">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Simulador de Pantallas</title>
+  <link rel="stylesheet" href="/static/styles.css">
+  <style>
+    #canvas-container {
+      position: relative;
+      width: 100%;
+      overflow: hidden;
+      margin-bottom: 1rem;
+      border-radius: .5rem;
+      box-shadow: 0 2px 8px rgba(0, 0, 0, .1);
+    }
+
+    #canvas {
+      position: relative;
+      width: 100%;
+      background-size: contain;
+      background-repeat: no-repeat;
+      background-position: center;
+      transition: height .3s ease;
+      background-color: #f5f5f5;
+      min-height: 300px;
+      border: 2px dashed #aaa;
+    }
+
+    #canvas-image {
+      display: none;
+    }
+
+    .pantalla {
+      position: absolute;
+      background: rgba(178, 235, 242, .7);
+      border: 2px solid var(--secondary-color);
+      cursor: move;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-direction: column;
+      padding: .5em;
+      border-radius: .25rem;
+      transition: box-shadow .2s, background-color .2s;
+      z-index: 10;
+    }
+
+    .pantalla.dragging {
+      box-shadow: 0 0 15px rgba(0, 0, 0, .4);
+      z-index: 100;
+      background: rgba(178, 235, 242, .9);
+    }
+
+    .etiqueta {
+      font-size: .75rem;
+      font-weight: bold;
+      text-shadow: 0 0 3px white;
+    }
+
+    .pantalla small {
+      font-size: .625rem;
+      text-shadow: 0 0 2px white;
+    }
+
+    .zoom-controls {
+      position: absolute;
+      bottom: 10px;
+      right: 10px;
+      display: flex;
+      gap: 5px;
+      z-index: 20;
+    }
+
+    .zoom-btn {
+      width: 36px;
+      height: 36px;
+      border-radius: 50%;
+      background: white;
+      border: 1px solid #ddd;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 18px;
+      cursor: pointer;
+      box-shadow: 0 2px 5px rgba(0, 0, 0, .1);
+    }
+
+    .zoom-btn:hover {
+      background: #f5f5f5;
+    }
+
+    .fit-width-toggle {
+      position: absolute;
+      top: 10px;
+      right: 10px;
+      z-index: 20;
+      background: white;
+      border-radius: 4px;
+      padding: 5px 10px;
+      font-size: 12px;
+      box-shadow: 0 2px 5px rgba(0, 0, 0, .1);
+      display: flex;
+      align-items: center;
+      gap: 5px;
+    }
+
+    .users-panel {
+      position: absolute;
+      top: 10px;
+      left: 10px;
+      z-index: 20;
+      background: white;
+      border-radius: 4px;
+      padding: 10px;
+      box-shadow: 0 2px 5px rgba(0, 0, 0, .1);
+      max-height: 300px;
+      overflow-y: auto;
+      width: 200px;
+    }
+
+    .user-item {
+      padding: 5px;
+      cursor: pointer;
+      border-radius: 3px;
+      margin-bottom: 3px;
+    }
+
+    .user-item:hover {
+      background: #f0f0f0;
+    }
+
+    .user-item.active {
+      background: #e0f0ff;
+    }
+
+    /* panel de configuración */
+    .config-panel {
+      margin-bottom: 1rem;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 1rem;
+    }
+
+    .config-panel>div {
+      flex: 1;
+      min-width: 200px;
+    }
+  </style>
+</head>
+
+<body>
+  <div class="container">
+    <h2>Distribución de usuarios</h2>
+
+    <div class="config-panel">
+      <div>
+        <label>Fondo (mapa):</label>
+        <input type="file" id="background-image" accept="image/*" class="form-control">
+      </div>
+      <div>
+        <label>Ancho real imagen (cm):</label>
+        <input type="number" id="background-width" value="{{ background_width_cm }}" min="10" class="form-control">
+      </div>
+      <div>
+        <label>Factor de escala:</label>
+        <input type="number" id="scale-factor" value="{{ scale_factor }}" min="0.1" max="5" step="0.1"
+          class="form-control">
+      </div>
+      <div>
+        <div class="form-check">
+          <input type="checkbox" id="auto-scale" class="form-check-input" {% if auto_scale %}checked{% endif %}>
+          <label class="form-check-label" for="auto-scale">Escala automática</label>
+        </div>
+      </div>
+      <div>
+        <button id="update-scale" class="btn btn-primary">Actualizar escala</button>
+      </div>
+      <div>
+        <label>Nº de filas (rejilla):</label>
+        <div class="input-group">
+          <input type="number" id="rows-input" value="1" min="1" class="form-control">
+          <div class="input-group-append">
+            <button id="apply-grid" class="btn btn-secondary">Aplicar</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div id="status-message" class="mb-3"></div>
+
+    <div id="canvas-container">
+      <div id="canvas"
+        style="background-image:url('/imagenes/fondo.jpg?t={{ timestamp }}'); height:{{ background.height * scale_factor }}px;">
+        <img id="canvas-image" src="/imagenes/fondo.jpg?t={{ timestamp }}">
+        {% for user_id, datos in usuarios.items() %}
+        <div class="pantalla" data-id="{{ user_id }}" data-ancho="{{ datos.ancho_px }}" data-alto="{{ datos.alto_px }}"
+          data-nombre="{{ user_id }}" style="width:{{ datos.canvas_width }}px;height:{{ datos.canvas_height }}px;
+                    left:{{ datos.pos_x }}px;top:{{ datos.pos_y }}px;">
+          <div class="etiqueta">{{ datos.nombre }}</div>
+          <small>{{ datos.ancho_px }}×{{ datos.alto_px }}px</small>
+        </div>
+        {% endfor %}
+      </div>
+
+      <div class="zoom-controls">
+        <button class="zoom-btn" id="zoom-in">+</button>
+        <button class="zoom-btn" id="zoom-out">–</button>
+        <button class="zoom-btn" id="zoom-reset">↺</button>
+      </div>
+
+      <div class="fit-width-toggle">
+        <input type="checkbox" id="fit-width" checked>
+        <label for="fit-width">Ajustar al ancho</label>
+      </div>
+
+      <div class="users-panel">
+        <h5>Usuarios</h5>
+        <div id="users-list">
+          {% for user_id, datos in usuarios.items() %}
+          <div class="user-item" data-id="{{ user_id }}">{{ datos.nombre }}</div>
+          {% endfor %}
+        </div>
+      </div>
+    </div>
+
+    <div class="mt-3">
+      <button id="save-positions" class="btn btn-success">Guardar posiciones</button>
+      <button id="generate-crops" class="btn btn-info">Generar recortes</button>
+      <button id="test-crops" class="btn btn-secondary">Probar recortes</button>
+    </div>
+
+    <div id="crop-debug" class="mt-4"></div>
+  </div>
+
+  <script>
+
+const wsAdmin = new WebSocket("ws://localhost:8000/ws/admin");
+
+wsAdmin.onopen = () => console.log("Conectado al WS de Admin");
+
+function enviarPosicionEnVivo(id, left, top, width, height) {
+  if (wsAdmin.readyState === WebSocket.OPEN) {
+    wsAdmin.send(JSON.stringify({
+      user_id: id,
+      pos_x: left,
+      pos_y: top,
+      width: width,
+      height: height
+    }));
+  }
+}
+
+    document.addEventListener("DOMContentLoaded", () => {
+      const canvasContainer = document.getElementById("canvas-container");
+      const canvas = document.getElementById("canvas");
+      const img = document.getElementById("canvas-image");
+      const pantallas = Array.from(document.querySelectorAll(".pantalla"));
+      const rowsInput = document.getElementById("rows-input");
+      const applyGrid = document.getElementById("apply-grid");
+      const fileInput = document.getElementById("background-image");
+      const saveBtn = document.getElementById("save-positions");
+      const genBtn = document.getElementById("generate-crops");
+      const testBtn = document.getElementById("test-crops");
+      const status = document.getElementById("status-message");
+      const bgWInput = document.getElementById("background-width");
+      const sfInput = document.getElementById("scale-factor");
+      const autoChk = document.getElementById("auto-scale");
+      const updScale = document.getElementById("update-scale");
+      const zoomIn = document.getElementById("zoom-in");
+      const zoomOut = document.getElementById("zoom-out");
+      const zoomRes = document.getElementById("zoom-reset");
+      const fitChk = document.getElementById("fit-width");
+      const usersList = document.getElementById("users-list");
+
+      let positions = {}, currentZoom = 1,
+        offsetX = 0, offsetY = 0, dragTgt = null,
+        originalHeight = parseFloat(canvas.style.height) || 600;
+
+      // —————— ESCALA & FIT WIDTH ——————
+      function updateCanvasSize() {
+        if (fitChk.checked) {
+          canvas.style.backgroundSize = 'contain';
+          img.onload = () => {
+            const aspect = img.naturalHeight / img.naturalWidth;
+            const w = canvasContainer.clientWidth;
+            canvas.style.height = Math.min(w * aspect, window.innerHeight * 0.8) + 'px';
+          };
+          img.src = img.src;
+        } else {
+          canvas.style.backgroundSize = 'cover';
+          canvas.style.height = Math.min(originalHeight * currentZoom, window.innerHeight * 0.8) + 'px';
+        }
+      }
+      fitChk.onchange = updateCanvasSize;
+      updateCanvasSize();
+
+      updScale.onclick = async () => {
+        const wcm = +bgWInput.value, sf = +sfInput.value, auto = autoChk.checked;
+        if (wcm > 0 && sf > 0) {
+          status.textContent = 'Actualizando…';
+          await fetch('/update-background-scale', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ width_cm: wcm, scale_factor: sf, auto_scale: auto })
+          });
+          location.reload();
+        } else {
+          status.textContent = 'Valores inválidos';
+        }
+      };
+
+      // —————— GRID DISTRIBUIDORA ——————
+      function distribuirEnRejilla() {
+        const R = Math.max(1, +rowsInput.value), N = pantallas.length;
+        const cols = Math.ceil(N / R);
+        const cw = canvas.clientWidth, ch = canvas.clientHeight;
+        const cellW = cw / cols, cellH = ch / R;
+        pantallas.forEach((el, i) => {
+          const row = Math.floor(i / cols), col = i % cols;
+          const w_px = +el.dataset.ancho, h_px = +el.dataset.alto;
+          const w_adj = cellW * 0.9, h_adj = w_adj * (h_px / w_px);
+          const left = col * cellW + (cellW - w_adj) / 2;
+          const top = R === 1
+            ? (cellH - h_adj) / 2
+            : (row * cellH + (cellH - h_adj));
+          el.style.width = w_adj + 'px';
+          el.style.height = h_adj + 'px';
+          el.style.left = left + 'px';
+          el.style.top = top + 'px';
+          positions[el.dataset.id] = {
+            pos_x: +(left / cw).toFixed(4),
+            pos_y: +(top / ch).toFixed(4)
+          };
+        });
+      }
+      distribuirEnRejilla();
+      applyGrid.onclick = distribuirEnRejilla;
+
+      // —————— ZOOM CONTROLS ——————
+      function applyZoomToUsers() {
+        pantallas.forEach(el => {
+          const ow = +el.dataset.w0 || parseFloat(el.style.width);
+          const oh = +el.dataset.h0 || parseFloat(el.style.height);
+          if (!el.dataset.w0) { el.dataset.w0 = ow; el.dataset.h0 = oh; }
+          el.style.width = ow * currentZoom + 'px';
+          el.style.height = oh * currentZoom + 'px';
+          const left0 = +el.dataset.l0 || parseFloat(el.style.left);
+          const top0 = +el.dataset.t0 || parseFloat(el.style.top);
+          if (!el.dataset.l0) { el.dataset.l0 = left0; el.dataset.t0 = top0; }
+          const newL = left0 * currentZoom, newT = top0 * currentZoom;
+          el.style.left = newL + 'px'; el.style.top = newT + 'px';
+          positions[el.dataset.id] = { pos_x: newL, pos_y: newT };
+        });
+      }
+      zoomIn.onclick = () => { currentZoom = Math.min(currentZoom + 0.1, 3); applyZoomToUsers(); };
+      zoomOut.onclick = () => { currentZoom = Math.max(currentZoom - 0.1, 0.5); applyZoomToUsers(); };
+      zoomRes.onclick = () => { currentZoom = 1; applyZoomToUsers(); };
+      canvas.onwheel = e => {
+        e.preventDefault();
+        if (e.deltaY < 0) currentZoom = Math.min(currentZoom + 0.1, 3);
+        else currentZoom = Math.max(currentZoom - 0.1, 0.5);
+        applyZoomToUsers();
+      };
+
+      // —————— DRAG & DROP ——————
+      function startDrag(e) {
+        const el = e.target.closest('.pantalla');
+        if (el && canvas.contains(el)) {
+          dragTgt = el;
+          const rect = el.getBoundingClientRect();
+          offsetX = e.clientX - rect.left; offsetY = e.clientY - rect.top;
+          el.classList.add('dragging');
+          e.preventDefault();
+        }
+      }
+
+      function dragMove(e) {
+  if (!dragTgt) return;
+
+  const cont = canvas.getBoundingClientRect();
+  let left = Math.max(0, e.clientX - cont.left - offsetX),
+      top = Math.max(0, e.clientY - cont.top - offsetY);
+
+  left = Math.min(left, cont.width - dragTgt.offsetWidth);
+  top  = Math.min(top, cont.height - dragTgt.offsetHeight);
+
+  dragTgt.style.left = left + 'px';
+  dragTgt.style.top  = top + 'px';
+
+  const id = dragTgt.dataset.id;
+  positions[id] = { pos_x: left, pos_y: top };
+
+  // 🟢 Enviar en vivo:
+  enviarPosicionEnVivo(id, left, top, dragTgt.offsetWidth, dragTgt.offsetHeight);
+}
+
+
+      function endDrag() {
+        if (dragTgt) dragTgt.classList.remove('dragging');
+        dragTgt = null;
+      }
+      canvas.addEventListener('mousedown', startDrag);
+      document.addEventListener('mousemove', dragMove);
+      document.addEventListener('mouseup', endDrag);
+      // touch
+      canvas.addEventListener('touchstart', e => {
+        const t = e.touches[0];
+        startDrag(new MouseEvent('mousedown', { clientX: t.clientX, clientY: t.clientY }));
+      });
+      document.addEventListener('touchmove', e => {
+        if (dragTgt) {
+          e.preventDefault();
+          const t = e.touches[0];
+          dragMove(new MouseEvent('mousemove', { clientX: t.clientX, clientY: t.clientY }));
+        }
+      }, { passive: false });
+      document.addEventListener('touchend', endDrag);
+
+      // —————— SAVE & CROPS ——————
+      saveBtn.onclick = async () => {
+        const canvasRect = canvas.getBoundingClientRect();
+        const resp = await fetch('/save-positions', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            positions,
+            canvas_width: canvasRect.width,
+            canvas_height: canvasRect.height
+          })
+        });
+        const j = await resp.json();
+        alert(j.status === 'ok' ? 'Guardado como porcentaje' : 'Error: ' + j.mensaje);
+      };
+
+      genBtn.onclick = async () => {
+        status.textContent = 'Generando recortes…';
+        const r = await fetch('/generar-recortes');
+        const j = await r.json();
+        status.textContent = j.status === 'ok' ? 'Recortes OK' : 'Error: ' + j.mensaje;
+        setTimeout(() => status.textContent = '', 3000);
+      };
+      testBtn.onclick = async () => {
+        const dbg = document.getElementById('crop-debug');
+        dbg.innerHTML = '<em>Cargando info…</em>';
+        let html = `<table class="table"><thead><tr>
+          <th>Usuario</th><th>Box</th><th>Ver</th></tr></thead><tbody>`;
+        for (let id in positions) {
+          const d = await (await fetch(`/test-crop/${id}`)).json();
+          if (d.caja_recorte) {
+            html += `<tr><td>${d.usuario}</td>
+                   <td>${d.caja_recorte.join(', ')}</td>
+                   <td><a href="/imagenes/${id}.jpg?t=${Date.now()}" target="_blank">Ver</a></td>
+                   </tr>`;
+          } else {
+            html += `<tr><td>${d.usuario}</td><td colspan=2>Inválido</td></tr>`;
+          }
+        }
+        html += '</tbody></table>';
+        dbg.innerHTML = html;
+      };
+
+      fileInput.onchange = async e => {
+  const f = e.target.files[0]; if (!f) return;
+  const fd = new FormData(); fd.append('file', f);
+  status.textContent = 'Subiendo…';
+  const res = await fetch('/upload-background', { method: 'POST', body: fd });
+  const j = await res.json();
+  if (j.status === 'ok') {
+    const t = Date.now();
+    canvas.style.backgroundImage = `url('/imagenes/fondo.jpg?t=${t}')`;
+    img.src = `/imagenes/fondo.jpg?t=${t}`;
+    updateCanvasSize();
+
+    // 🟢 Avisar a todos los usuarios:
+    wsAdmin.send(JSON.stringify({ type: "fondo", url: `/imagenes/fondo.jpg?t=${t}` }));
+  }
+  status.textContent = j.status === 'ok' ? 'Fondo actualizado' : 'Error: ' + j.mensaje;
+  setTimeout(() => status.textContent = '', 3000);
+};
+
+
+
+      // —————— USER PANEL CLICK ——————
+      usersList.querySelectorAll('.user-item').forEach(item => {
+        item.onclick = () => {
+          usersList.querySelectorAll('.user-item').forEach(i => i.classList.remove('active'));
+          item.classList.add('active');
+          const id = item.dataset.id;
+          const p = document.querySelector(`.pantalla[data-id="${id}"]`);
+          if (p) {
+            const cr = canvas.getBoundingClientRect(),
+              pr = p.getBoundingClientRect();
+            canvas.scrollLeft = pr.left + pr.width / 2 - cr.width / 2;
+            canvas.scrollTop = pr.top + pr.height / 2 - cr.height / 2;
+            pantallas.forEach(e => e.style.boxShadow = 'none');
+            p.style.boxShadow = '0 0 15px rgba(0,0,0,.6)';
+            setTimeout(() => p.style.boxShadow = '', 2000);
+          }
+        };
+      });
+
+      // —————— HANDLE WINDOW RESIZE ——————
+      window.addEventListener('resize', () => {
+        updateCanvasSize();
+        distribuirEnRejilla();
+      });
+
+    });
+  </script>
+</body>
+
+</html>

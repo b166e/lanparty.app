@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html lang="es">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Vista de {{ nombre }}</title>
+  <link rel="stylesheet" href="/static/styles.css">
+  <style>
+    .qr-code {
+      text-align: center;
+      margin: 20px 0;
+    }
+
+    .qr-code img {
+      max-width: 200px;
+      background: #fff;
+      padding: 10px;
+      border: 1px solid #ddd;
+      border-radius: 5px;
+    }
+
+    .user-content {
+      max-width: 100%;
+      overflow: hidden;
+    }
+
+    .user-content img {
+      display: block;
+      margin: 0 auto;
+      max-width: 100%;
+      height: auto;
+    }
+
+    #content {
+      padding: 15px;
+    }
+
+    .reload-btn {
+      display: block;
+      margin: 10px auto;
+      padding: 8px 15px;
+      background: #f0f0f0;
+      border: 1px solid #ddd;
+      border-radius: 4px;
+      cursor: pointer;
+    }
+
+    .reload-btn:hover {
+      background: #e0e0e0;
+    }
+  </style>
+
+  <script>
+    document.addEventListener("DOMContentLoaded", () => {
+      const wsUser = new WebSocket("ws://localhost:8000/ws/user/{{ user_id }}");
+
+      wsUser.onmessage = (event) => {
+        const data = JSON.parse(event.data);
+
+        if (data.type === "fondo") {
+          const fondo = document.getElementById("fondo-live");
+          fondo.src = data.url;
+          return;
+        }
+
+        const fondo = document.getElementById("fondo-live");
+        const cont = document.getElementById("recorte-container");
+
+        fondo.style.left = -data.pos_x + "px";
+        fondo.style.top = -data.pos_y + "px";
+        fondo.style.width = data.bg_width + "px";  // Control del tamaño fondo
+        cont.style.width = data.width + "px";
+        cont.style.height = data.height + "px";
+      };
+
+      const evt = new EventSource("/sse/usuario/{{ user_id }}");
+      evt.onmessage = e => { if (e.data === "recargar") location.reload(); };
+
+      fetch('/pantalla', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          nombre: "{{ user_id }}",
+          ancho: window.innerWidth,
+          alto: window.innerHeight
+        })
+      }).then(() => fetch('/generar-recortes'))
+        .catch(console.error);
+
+      reloadImage();
+    });
+
+    function reloadImage() {
+      const img = document.querySelector('#fondo-live');
+      if (!img) return;
+      const src = img.src.split('?')[0];
+      img.src = src + '?t=' + new Date().getTime();
+    }
+  </script>
+
+
+
+</head>
+
+<body>
+  <div class="user-content">
+    <!-- Imagen/corte del fondo -->
+
+    <div id="recorte-container" style="position:relative; overflow:hidden; width:100%; max-width:600px; height:300px;">
+      <img id="fondo-live" src="/imagenes/fondo.jpg?t={{ timestamp }}" style="position:absolute; top:0; left:0;">
+    </div>
+
+    <button class="reload-btn" onclick="reloadImage()">Actualizar imagen</button>
+
+    <div id="content">
+      {{ html_content | safe }}
+    </div>
+
+    <div class="qr-code">
+      <h3>Tu código QR personal</h3>
+      <img src="{{ qr_code }}" alt="QR de {{ nombre }}">
+      <p>Escanea este código para acceder rápidamente a tu vista</p>
+    </div>
+  </div>
+</body>
+
+</html>

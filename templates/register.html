@@ -1,0 +1,98 @@
+<!-- templates/register.html -->
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Registro de Usuario</title>
+  <link rel="stylesheet" href="/static/styles.css"/>
+</head>
+<body>
+  <div class="container">
+    <h1>Bienvenido</h1>
+    <p>Por favor ingresa tu nombre para comenzar:</p>
+    <form id="form">
+      <input
+        id="nombre"
+        name="nombre"
+        type="text"
+        placeholder="Tu nombre"
+        class="form-control mb-2"
+      />
+      <button type="submit" class="btn btn-primary">Entrar</button>
+    </form>
+    <div id="status-message" class="mt-3"></div>
+  </div>
+
+  <script>
+    document.addEventListener("DOMContentLoaded", () => {
+      const form = document.getElementById("form")
+      const nombreInput = document.getElementById("nombre")
+      const statusMessage = document.getElementById("status-message")
+
+      // Recuperar nombre si ya está en localStorage
+      const nombreGuardado = localStorage.getItem("nombre")
+      if (nombreGuardado) {
+        nombreInput.value = nombreGuardado
+        // Abrir SSE para recibir recargas
+        const evt = new EventSource(`/sse/usuario/${encodeURIComponent(nombreGuardado)}`)
+        evt.onmessage = e => e.data === "recargar" && location.reload()
+      }
+
+      form.addEventListener("submit", async e => {
+        e.preventDefault()
+        const nombre = nombreInput.value.trim()
+        if (!nombre) {
+          statusMessage.textContent = "Por favor ingresa tu nombre"
+          statusMessage.className = "alert alert-warning"
+          return
+        }
+        localStorage.setItem("nombre", nombre)
+
+        statusMessage.textContent = "Obteniendo ubicación…"
+        statusMessage.className = "alert alert-info"
+
+        // Intentar geolocalización
+        const coords = await new Promise(resolve => {
+          navigator.geolocation.getCurrentPosition(
+            p => resolve(p.coords),
+            () => resolve({ latitude: null, longitude: null }),
+            { timeout: 10000 }
+          )
+        })
+
+        statusMessage.textContent = "Registrando usuario…"
+        const resp = await fetch("/registrar", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            nombre,
+            lat: coords.latitude,
+            lon: coords.longitude
+          })
+        })
+
+        if (!resp.ok) {
+          statusMessage.textContent = "Error al registrar usuario"
+          statusMessage.className = "alert alert-danger"
+          return
+        }
+
+        statusMessage.textContent = "Enviando dimensiones de pantalla…"
+        await fetch("/pantalla", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            nombre,
+            ancho: window.innerWidth,
+            alto: window.innerHeight
+          })
+        })
+
+        // Finalmente redirigir
+        window.location.href = `/ver-html/${encodeURIComponent(nombre)}`
+      })
+    })
+  </script>
+</body>
+</html>
