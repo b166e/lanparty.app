@@ -1,64 +1,25 @@
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.staticfiles import StaticFiles
-from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
-import uvicorn
-import os
-import uuid
-import asyncio
-
-from routes.admin import router as admin_router
+from connection_manager import manager
 from routes.user import router as user_router
-from services.notification_service import admin_connections
+from routes.admin import router as admin_router
 
-# Create FastAPI app
 app = FastAPI()
 
-# Add CORS middleware
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-# Mount static files
+# Carpeta de assets (CSS, JS, imágenes estáticas)
 app.mount("/static", StaticFiles(directory="static"), name="static")
-
-# Ensure the imagenes directory exists
-os.makedirs("imagenes", exist_ok=True)
+# Carpeta donde guardas y sirves los recortes y el fondo dinámico
 app.mount("/imagenes", StaticFiles(directory="imagenes"), name="imagenes")
 
-# Include routers
-app.include_router(admin_router)
+# Routers
 app.include_router(user_router)
+app.include_router(admin_router)
 
-# Handle SSE for admins
-@app.get("/sse/admin")
-async def sse_admin(request: Request):
-    """Server-Sent Events endpoint for admin notifications"""
-    client_id = str(uuid.uuid4())
-    queue = asyncio.Queue()
-    admin_connections[client_id] = queue
-
-    async def event_stream():
-        try:
-            while True:
-                if await request.is_disconnected():
-                    break
-                data = await queue.get()
-                yield f"data: {data}\n\n"
-        finally:
-            # Clean up when client disconnects
-            if client_id in admin_connections:
-                del admin_connections[client_id]
-
-    return StreamingResponse(event_stream(), media_type="text/event-stream")
-
-# Create the necessary directories on startup
-@app.on_event("startup")
-async def startup_event():
-    os.makedirs("imagenes", exist_ok=True)
-
-if __name__ == "__main__":
-    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
+@app.websocket("/ws/user/{user_id}")
+async def websocket_user(websocket: WebSocket, user_id: str):
+    await manager.connect(websocket, user_id)
+    try:
+        while True:
+            await websocket.receive_text()
+    except WebSocketDisconnect:
+        manager.disconnect(user_id)

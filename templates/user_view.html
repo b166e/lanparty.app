@@ -7,11 +7,62 @@
   <title>Vista de {{ nombre }}</title>
   <link rel="stylesheet" href="/static/styles.css">
   <style>
-    .qr-code {
-      text-align: center;
-      margin: 20px 0;
+    /* --------------------------------------------------
+       Estilos básicos de tu layout de usuario
+       -------------------------------------------------- */
+    html, body {
+      margin: 0;
+      padding: 0;
+      height: 100%;
+      overflow: hidden;
     }
 
+    .user-content {
+      position: relative;
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+      background: #fff;
+    }
+
+    /* --------------------------------------------------
+       Contenedor del recorte a pantalla completa
+       -------------------------------------------------- */
+    #recorte-container {
+      position: relative;
+      width: 100vw;
+      height: 100vh;
+      overflow: hidden;
+      flex: 1; /* ocupa todo el alto restante */
+      background: #000; /* para visualizar márgenes vacíos */
+    }
+
+    /* --------------------------------------------------
+       La imagen de fondo “viviente” que se traslada
+       -------------------------------------------------- */
+    #fondo-live {
+      position: absolute;
+      top: 0;
+      left: 0;
+      /* ancho y alto los ajustamos por JS */
+    }
+
+    /* --------------------------------------------------
+       Resto de tu layout: HTML dinámico y QR
+       -------------------------------------------------- */
+    #content {
+      padding: 15px;
+      background: #fafafa;
+      overflow: auto;
+    }
+
+    .qr-code {
+      text-align: center;
+      padding: 10px;
+      background: #fff;
+    }
     .qr-code img {
       max-width: 200px;
       background: #fff;
@@ -20,24 +71,7 @@
       border-radius: 5px;
     }
 
-    .user-content {
-      max-width: 100%;
-      overflow: hidden;
-    }
-
-    .user-content img {
-      display: block;
-      margin: 0 auto;
-      max-width: 100%;
-      height: auto;
-    }
-
-    #content {
-      padding: 15px;
-    }
-
     .reload-btn {
-      display: block;
       margin: 10px auto;
       padding: 8px 15px;
       background: #f0f0f0;
@@ -45,83 +79,74 @@
       border-radius: 4px;
       cursor: pointer;
     }
-
     .reload-btn:hover {
       background: #e0e0e0;
     }
   </style>
 
   <script>
-    document.addEventListener("DOMContentLoaded", () => {
-      const wsUser = new WebSocket("ws://localhost:8000/ws/user/{{ user_id }}");
 
-      wsUser.onmessage = (event) => {
-        const data = JSON.parse(event.data);
+document.addEventListener("DOMContentLoaded", () => {
+    const fondo = document.getElementById("fondo-live");
+    const proto = location.protocol === "https:" ? "wss" : "ws";
+    const ws    = new WebSocket(`${proto}://${location.host}/ws/user/{{ user_id }}`);
 
-        if (data.type === "fondo") {
-          const fondo = document.getElementById("fondo-live");
-          fondo.src = data.url;
-          return;
-        }
+    ws.onopen = () => console.log("🟢 WS Usuario conectado");
+    ws.onerror = e  => console.error("❌ WS Usuario error:", e);
 
-        const fondo = document.getElementById("fondo-live");
-        const cont = document.getElementById("recorte-container");
+    ws.onmessage = ({ data }) => {
+      console.log("← Mensaje recibido en user:", data);
+      const msg = JSON.parse(data);
 
-        fondo.style.left = -data.pos_x + "px";
-        fondo.style.top = -data.pos_y + "px";
-        fondo.style.width = data.bg_width + "px";  // Control del tamaño fondo
-        cont.style.width = data.width + "px";
-        cont.style.height = data.height + "px";
-      };
+      if (msg.type === "fondo") {
+        fondo.src = msg.url;
+        return;
+      }
+      if (msg.type === "update") {
+        // … tu lógica de mover la imagen …
+        const canvasEl = document.querySelector("#canvas");
+        const { width, height } = canvasEl.getBoundingClientRect();
+        fondo.style.width  = width  + "px";
+        fondo.style.height = height + "px";
 
-      const evt = new EventSource("/sse/usuario/{{ user_id }}");
-      evt.onmessage = e => { if (e.data === "recargar") location.reload(); };
-
-      fetch('/pantalla', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          nombre: "{{ user_id }}",
-          ancho: window.innerWidth,
-          alto: window.innerHeight
-        })
-      }).then(() => fetch('/generar-recortes'))
-        .catch(console.error);
-
-      reloadImage();
-    });
-
+        const dx = msg.pos_x_pct * width;
+        const dy = msg.pos_y_pct * height;
+        fondo.style.left = `-${dx}px`;
+        fondo.style.top  = `-${dy}px`;
+      }
+    };
+  });
+    // Función para recargar manualmente el fondo
     function reloadImage() {
-      const img = document.querySelector('#fondo-live');
-      if (!img) return;
-      const src = img.src.split('?')[0];
-      img.src = src + '?t=' + new Date().getTime();
+      const img = document.getElementById("fondo-live");
+      img.src = img.src.split('?')[0] + '?t=' + Date.now();
     }
   </script>
-
-
-
 </head>
 
 <body>
   <div class="user-content">
-    <!-- Imagen/corte del fondo -->
 
-    <div id="recorte-container" style="position:relative; overflow:hidden; width:100%; max-width:600px; height:300px;">
-      <img id="fondo-live" src="/imagenes/fondo.jpg?t={{ timestamp }}" style="position:absolute; top:0; left:0;">
+    <!-- 1) Recorte “live” a pantalla completa -->
+    <div id="recorte-container">
+      <img id="fondo-live" src="/imagenes/fondo.jpg?t={{ timestamp }}" alt="Mapa en vivo">
     </div>
 
+    <!-- 2) Botón para forzar recarga si fuese necesario -->
     <button class="reload-btn" onclick="reloadImage()">Actualizar imagen</button>
 
+    <!-- 3) Contenido HTML personalizado -->
     <div id="content">
       {{ html_content | safe }}
     </div>
 
+    <!-- 4) Tu QR personal -->
     <div class="qr-code">
       <h3>Tu código QR personal</h3>
       <img src="{{ qr_code }}" alt="QR de {{ nombre }}">
       <p>Escanea este código para acceder rápidamente a tu vista</p>
     </div>
+
   </div>
 </body>
 

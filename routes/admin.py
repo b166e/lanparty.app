@@ -6,6 +6,8 @@ import aiofiles
 import time
 from typing import Dict, List
 from PIL import Image
+from connection_manager import manager
+
 
 from models.user import ScreenInfo, User
 from utils.qr import generar_qr
@@ -45,7 +47,8 @@ scaling_manager = ScalingManager(
     scale_factor=1.0
 )
 
-from fastapi import APIRouter, Request
+
+from fastapi import APIRouter
 from fastapi.responses import HTMLResponse, JSONResponse, Response
 from fastapi.templating import Jinja2Templates
 import time
@@ -494,26 +497,15 @@ async def eliminar_usuario(identifier: str):
         print(f"Error in eliminar-usuario: {e}")
         return JSONResponse(status_code=500, content={"status":"error","mensaje":str(e)})
     
-    
-active_connections = {}
-router.websocket("/ws/admin")
+@router.websocket("/ws/admin")
 async def websocket_admin(websocket: WebSocket):
     await websocket.accept()
     try:
         while True:
             data = await websocket.receive_json()
-            user_id = data["user_id"]
-            if user_id in active_connections:
-                await active_connections[user_id].send_json(data)
+            if data.get("type") == "fondo":
+                await manager.broadcast(data)
+            elif (uid := data.get("user_id")):
+                await manager.send_personal_message(data, uid)
     except WebSocketDisconnect:
         pass
-
-@router.websocket("/ws/usuario/{user_id}")
-async def websocket_usuario(websocket: WebSocket, user_id: str):
-    await websocket.accept()
-    active_connections[user_id] = websocket
-    try:
-        while True:
-            await websocket.receive_text()  # mantener viva la conexión
-    except WebSocketDisconnect:
-        del active_connections[user_id]

@@ -21,7 +21,7 @@
       width: 100%;
       background-size: contain;
       background-repeat: no-repeat;
-      background-position: center;
+      background-position: top center;
       transition: height .3s ease;
       background-color: #f5f5f5;
       min-height: 300px;
@@ -233,282 +233,190 @@
 
     <div id="crop-debug" class="mt-4"></div>
   </div>
-
   <script>
+ const proto = window.location.protocol === "https:" ? "wss" : "ws";
+  const host  = window.location.host;
+  const wsAdmin = new WebSocket(`${proto}://${host}/ws/admin`);
 
-const wsAdmin = new WebSocket("ws://localhost:8000/ws/admin");
+    wsAdmin.onopen  = () => console.log("🟢 WS Admin conectado");
+    wsAdmin.onerror = e => console.error("❌ WS Admin error:", e);
+  
+    
+    function enviarPosicionEnVivo(id, left, top, width, height) {
+    if (wsAdmin.readyState !== WebSocket.OPEN) return;
+    const canvasRect = document.getElementById("canvas").getBoundingClientRect();
+    const pos_x_pct = left / canvasRect.width;
+    const pos_y_pct = top  / canvasRect.height;
 
-wsAdmin.onopen = () => console.log("Conectado al WS de Admin");
+    // **DEBUG**: mira en consola
+    console.log("→ Enviando update:", { user_id: id, pos_x_pct, pos_y_pct });
 
-function enviarPosicionEnVivo(id, left, top, width, height) {
-  if (wsAdmin.readyState === WebSocket.OPEN) {
     wsAdmin.send(JSON.stringify({
-      user_id: id,
-      pos_x: left,
-      pos_y: top,
-      width: width,
-      height: height
+      type:      "update",
+      user_id:   id,
+      pos_x_pct,  // normalizado [0..1]
+      pos_y_pct
     }));
   }
-}
 
+
+  
     document.addEventListener("DOMContentLoaded", () => {
       const canvasContainer = document.getElementById("canvas-container");
-      const canvas = document.getElementById("canvas");
-      const img = document.getElementById("canvas-image");
-      const pantallas = Array.from(document.querySelectorAll(".pantalla"));
-      const rowsInput = document.getElementById("rows-input");
-      const applyGrid = document.getElementById("apply-grid");
-      const fileInput = document.getElementById("background-image");
-      const saveBtn = document.getElementById("save-positions");
-      const genBtn = document.getElementById("generate-crops");
-      const testBtn = document.getElementById("test-crops");
-      const status = document.getElementById("status-message");
-      const bgWInput = document.getElementById("background-width");
-      const sfInput = document.getElementById("scale-factor");
-      const autoChk = document.getElementById("auto-scale");
-      const updScale = document.getElementById("update-scale");
-      const zoomIn = document.getElementById("zoom-in");
-      const zoomOut = document.getElementById("zoom-out");
-      const zoomRes = document.getElementById("zoom-reset");
-      const fitChk = document.getElementById("fit-width");
-      const usersList = document.getElementById("users-list");
-
-      let positions = {}, currentZoom = 1,
-        offsetX = 0, offsetY = 0, dragTgt = null,
-        originalHeight = parseFloat(canvas.style.height) || 600;
-
-      // —————— ESCALA & FIT WIDTH ——————
+      const canvas          = document.getElementById("canvas");
+      const img             = document.getElementById("canvas-image");
+      const pantallas       = Array.from(document.querySelectorAll(".pantalla"));
+      const rowsInput       = document.getElementById("rows-input");
+      const applyGrid       = document.getElementById("apply-grid");
+      const fitChk          = document.getElementById("fit-width");
+      const zoomIn          = document.getElementById("zoom-in");
+      const zoomOut         = document.getElementById("zoom-out");
+      const zoomRes         = document.getElementById("zoom-reset");
+  
+      let positions   = {},
+          currentZoom = parseFloat(localStorage.getItem("previewZoom") || "1"),
+          offsetX     = 0,
+          offsetY     = 0,
+          dragTgt     = null,
+          originalH   = parseFloat(canvas.style.height) || 600;
+  
+      // — ESCALA & FIT WIDTH —
       function updateCanvasSize() {
         if (fitChk.checked) {
           canvas.style.backgroundSize = 'contain';
           img.onload = () => {
             const aspect = img.naturalHeight / img.naturalWidth;
             const w = canvasContainer.clientWidth;
-            canvas.style.height = Math.min(w * aspect, window.innerHeight * 0.8) + 'px';
+            canvas.style.height = Math.min(w * aspect, window.innerHeight * .8) + 'px';
           };
           img.src = img.src;
         } else {
           canvas.style.backgroundSize = 'cover';
-          canvas.style.height = Math.min(originalHeight * currentZoom, window.innerHeight * 0.8) + 'px';
+          canvas.style.height = Math.min(originalH * currentZoom, window.innerHeight * .8) + 'px';
         }
       }
       fitChk.onchange = updateCanvasSize;
       updateCanvasSize();
-
-      updScale.onclick = async () => {
-        const wcm = +bgWInput.value, sf = +sfInput.value, auto = autoChk.checked;
-        if (wcm > 0 && sf > 0) {
-          status.textContent = 'Actualizando…';
-          await fetch('/update-background-scale', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ width_cm: wcm, scale_factor: sf, auto_scale: auto })
-          });
-          location.reload();
-        } else {
-          status.textContent = 'Valores inválidos';
-        }
+  
+      // — GUARDAR / APLICAR ZOOM —
+      function storeZoom() {
+        localStorage.setItem("previewZoom", currentZoom);
+      }
+      function applyZoomToUsers() {
+        pantallas.forEach(el => {
+          const ow = +el.dataset.w0, oh = +el.dataset.h0;
+          el.style.width  = ow * currentZoom + 'px';
+          el.style.height = oh * currentZoom + 'px';
+          const newL = +el.dataset.l0 * currentZoom;
+          const newT = +el.dataset.t0 * currentZoom;
+          el.style.left = newL + 'px';
+          el.style.top  = newT + 'px';
+          positions[el.dataset.id] = { pos_x:newL, pos_y:newT };
+        });
+      }
+      zoomIn.onclick = () => { currentZoom = Math.min(currentZoom+0.1,3); applyZoomToUsers(); storeZoom(); };
+      zoomOut.onclick= () => { currentZoom = Math.max(currentZoom-0.1,0.5); applyZoomToUsers(); storeZoom(); };
+      zoomRes.onclick= () => { currentZoom = 1; applyZoomToUsers(); storeZoom(); };
+      canvas.onwheel  = e => {
+        e.preventDefault();
+        currentZoom = e.deltaY<0
+          ? Math.min(currentZoom+0.1,3)
+          : Math.max(currentZoom-0.1,0.5);
+        applyZoomToUsers();
+        storeZoom();
       };
-
-      // —————— GRID DISTRIBUIDORA ——————
+  
+      // — DISTRIBUIR EN REJILLA —
       function distribuirEnRejilla() {
-        const R = Math.max(1, +rowsInput.value), N = pantallas.length;
-        const cols = Math.ceil(N / R);
-        const cw = canvas.clientWidth, ch = canvas.clientHeight;
-        const cellW = cw / cols, cellH = ch / R;
-        pantallas.forEach((el, i) => {
-          const row = Math.floor(i / cols), col = i % cols;
-          const w_px = +el.dataset.ancho, h_px = +el.dataset.alto;
-          const w_adj = cellW * 0.9, h_adj = w_adj * (h_px / w_px);
-          const left = col * cellW + (cellW - w_adj) / 2;
-          const top = R === 1
-            ? (cellH - h_adj) / 2
-            : (row * cellH + (cellH - h_adj));
-          el.style.width = w_adj + 'px';
+        const R = Math.max(1,+rowsInput.value),
+              N = pantallas.length,
+              cols = Math.ceil(N/R),
+              cw = canvas.clientWidth,
+              ch = canvas.clientHeight,
+              cellW = cw/cols,
+              cellH = ch/R;
+  
+        pantallas.forEach((el,i) => {
+          const row = Math.floor(i/cols),
+                col = i%cols,
+                w_px = +el.dataset.ancho,
+                h_px = +el.dataset.alto,
+                w_adj = cellW * .9,
+                h_adj = w_adj * (h_px/w_px),
+                left  = col*cellW + (cellW-w_adj)/2,
+                top   = row*cellH + (cellH-h_adj)/2;
+  
+          el.style.width  = w_adj + 'px';
           el.style.height = h_adj + 'px';
-          el.style.left = left + 'px';
-          el.style.top = top + 'px';
-          positions[el.dataset.id] = {
-            pos_x: +(left / cw).toFixed(4),
-            pos_y: +(top / ch).toFixed(4)
-          };
+          el.style.left   = left + 'px';
+          el.style.top    = top  + 'px';
+          positions[el.dataset.id] = { pos_x:left, pos_y:top };
         });
       }
       distribuirEnRejilla();
       applyGrid.onclick = distribuirEnRejilla;
-
-      // —————— ZOOM CONTROLS ——————
-      function applyZoomToUsers() {
-        pantallas.forEach(el => {
-          const ow = +el.dataset.w0 || parseFloat(el.style.width);
-          const oh = +el.dataset.h0 || parseFloat(el.style.height);
-          if (!el.dataset.w0) { el.dataset.w0 = ow; el.dataset.h0 = oh; }
-          el.style.width = ow * currentZoom + 'px';
-          el.style.height = oh * currentZoom + 'px';
-          const left0 = +el.dataset.l0 || parseFloat(el.style.left);
-          const top0 = +el.dataset.t0 || parseFloat(el.style.top);
-          if (!el.dataset.l0) { el.dataset.l0 = left0; el.dataset.t0 = top0; }
-          const newL = left0 * currentZoom, newT = top0 * currentZoom;
-          el.style.left = newL + 'px'; el.style.top = newT + 'px';
-          positions[el.dataset.id] = { pos_x: newL, pos_y: newT };
-        });
-      }
-      zoomIn.onclick = () => { currentZoom = Math.min(currentZoom + 0.1, 3); applyZoomToUsers(); };
-      zoomOut.onclick = () => { currentZoom = Math.max(currentZoom - 0.1, 0.5); applyZoomToUsers(); };
-      zoomRes.onclick = () => { currentZoom = 1; applyZoomToUsers(); };
-      canvas.onwheel = e => {
-        e.preventDefault();
-        if (e.deltaY < 0) currentZoom = Math.min(currentZoom + 0.1, 3);
-        else currentZoom = Math.max(currentZoom - 0.1, 0.5);
-        applyZoomToUsers();
-      };
-
-      // —————— DRAG & DROP ——————
+  
+      // — INICIALIZAR DATOS ORIGINALES + APLICAR ZOOM —
+      pantallas.forEach(el => {
+        el.dataset.w0 = parseFloat(el.style.width);
+        el.dataset.h0 = parseFloat(el.style.height);
+        el.dataset.l0 = parseFloat(el.style.left);
+        el.dataset.t0 = parseFloat(el.style.top);
+      });
+      applyZoomToUsers();
+  
+      // — DRAG & DROP —
       function startDrag(e) {
         const el = e.target.closest('.pantalla');
-        if (el && canvas.contains(el)) {
-          dragTgt = el;
-          const rect = el.getBoundingClientRect();
-          offsetX = e.clientX - rect.left; offsetY = e.clientY - rect.top;
-          el.classList.add('dragging');
-          e.preventDefault();
-        }
+        if (!el) return;
+        dragTgt = el;
+        const r = el.getBoundingClientRect();
+        offsetX = e.clientX - r.left;
+        offsetY = e.clientY - r.top;
+        el.classList.add('dragging');
       }
-
       function dragMove(e) {
-  if (!dragTgt) return;
-
-  const cont = canvas.getBoundingClientRect();
-  let left = Math.max(0, e.clientX - cont.left - offsetX),
-      top = Math.max(0, e.clientY - cont.top - offsetY);
-
-  left = Math.min(left, cont.width - dragTgt.offsetWidth);
-  top  = Math.min(top, cont.height - dragTgt.offsetHeight);
-
-  dragTgt.style.left = left + 'px';
-  dragTgt.style.top  = top + 'px';
-
-  const id = dragTgt.dataset.id;
-  positions[id] = { pos_x: left, pos_y: top };
-
-  // 🟢 Enviar en vivo:
-  enviarPosicionEnVivo(id, left, top, dragTgt.offsetWidth, dragTgt.offsetHeight);
-}
-
-
+        if (!dragTgt) return;
+        const cont = canvasContainer.getBoundingClientRect();
+        let left = e.clientX - cont.left - offsetX,
+            top  = e.clientY - cont.top  - offsetY;
+        left = Math.min(Math.max(0,left), cont.width - dragTgt.offsetWidth);
+        top  = Math.min(Math.max(0,top),  cont.height- dragTgt.offsetHeight);
+        dragTgt.style.left = left + 'px';
+        dragTgt.style.top  = top  + 'px';
+        positions[dragTgt.dataset.id] = { pos_x:left, pos_y:top };
+        enviarPosicionEnVivo(
+          dragTgt.dataset.id,
+          left, top,
+          dragTgt.offsetWidth,
+          dragTgt.offsetHeight
+        );
+      }
       function endDrag() {
         if (dragTgt) dragTgt.classList.remove('dragging');
         dragTgt = null;
       }
       canvas.addEventListener('mousedown', startDrag);
       document.addEventListener('mousemove', dragMove);
-      document.addEventListener('mouseup', endDrag);
+      document.addEventListener('mouseup',   endDrag);
       // touch
-      canvas.addEventListener('touchstart', e => {
-        const t = e.touches[0];
-        startDrag(new MouseEvent('mousedown', { clientX: t.clientX, clientY: t.clientY }));
+      canvas.addEventListener('touchstart', e=>{
+        const t=e.touches[0];
+        startDrag(new MouseEvent('mousedown',{clientX:t.clientX,clientY:t.clientY}));
       });
-      document.addEventListener('touchmove', e => {
-        if (dragTgt) {
-          e.preventDefault();
-          const t = e.touches[0];
-          dragMove(new MouseEvent('mousemove', { clientX: t.clientX, clientY: t.clientY }));
-        }
-      }, { passive: false });
+      document.addEventListener('touchmove', e=>{
+        if (!dragTgt) return;
+        e.preventDefault();
+        const t=e.touches[0];
+        dragMove(new MouseEvent('mousemove',{clientX:t.clientX,clientY:t.clientY}));
+      },{passive:false});
       document.addEventListener('touchend', endDrag);
-
-      // —————— SAVE & CROPS ——————
-      saveBtn.onclick = async () => {
-        const canvasRect = canvas.getBoundingClientRect();
-        const resp = await fetch('/save-positions', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            positions,
-            canvas_width: canvasRect.width,
-            canvas_height: canvasRect.height
-          })
-        });
-        const j = await resp.json();
-        alert(j.status === 'ok' ? 'Guardado como porcentaje' : 'Error: ' + j.mensaje);
-      };
-
-      genBtn.onclick = async () => {
-        status.textContent = 'Generando recortes…';
-        const r = await fetch('/generar-recortes');
-        const j = await r.json();
-        status.textContent = j.status === 'ok' ? 'Recortes OK' : 'Error: ' + j.mensaje;
-        setTimeout(() => status.textContent = '', 3000);
-      };
-      testBtn.onclick = async () => {
-        const dbg = document.getElementById('crop-debug');
-        dbg.innerHTML = '<em>Cargando info…</em>';
-        let html = `<table class="table"><thead><tr>
-          <th>Usuario</th><th>Box</th><th>Ver</th></tr></thead><tbody>`;
-        for (let id in positions) {
-          const d = await (await fetch(`/test-crop/${id}`)).json();
-          if (d.caja_recorte) {
-            html += `<tr><td>${d.usuario}</td>
-                   <td>${d.caja_recorte.join(', ')}</td>
-                   <td><a href="/imagenes/${id}.jpg?t=${Date.now()}" target="_blank">Ver</a></td>
-                   </tr>`;
-          } else {
-            html += `<tr><td>${d.usuario}</td><td colspan=2>Inválido</td></tr>`;
-          }
-        }
-        html += '</tbody></table>';
-        dbg.innerHTML = html;
-      };
-
-      fileInput.onchange = async e => {
-  const f = e.target.files[0]; if (!f) return;
-  const fd = new FormData(); fd.append('file', f);
-  status.textContent = 'Subiendo…';
-  const res = await fetch('/upload-background', { method: 'POST', body: fd });
-  const j = await res.json();
-  if (j.status === 'ok') {
-    const t = Date.now();
-    canvas.style.backgroundImage = `url('/imagenes/fondo.jpg?t=${t}')`;
-    img.src = `/imagenes/fondo.jpg?t=${t}`;
-    updateCanvasSize();
-
-    // 🟢 Avisar a todos los usuarios:
-    wsAdmin.send(JSON.stringify({ type: "fondo", url: `/imagenes/fondo.jpg?t=${t}` }));
-  }
-  status.textContent = j.status === 'ok' ? 'Fondo actualizado' : 'Error: ' + j.mensaje;
-  setTimeout(() => status.textContent = '', 3000);
-};
-
-
-
-      // —————— USER PANEL CLICK ——————
-      usersList.querySelectorAll('.user-item').forEach(item => {
-        item.onclick = () => {
-          usersList.querySelectorAll('.user-item').forEach(i => i.classList.remove('active'));
-          item.classList.add('active');
-          const id = item.dataset.id;
-          const p = document.querySelector(`.pantalla[data-id="${id}"]`);
-          if (p) {
-            const cr = canvas.getBoundingClientRect(),
-              pr = p.getBoundingClientRect();
-            canvas.scrollLeft = pr.left + pr.width / 2 - cr.width / 2;
-            canvas.scrollTop = pr.top + pr.height / 2 - cr.height / 2;
-            pantallas.forEach(e => e.style.boxShadow = 'none');
-            p.style.boxShadow = '0 0 15px rgba(0,0,0,.6)';
-            setTimeout(() => p.style.boxShadow = '', 2000);
-          }
-        };
-      });
-
-      // —————— HANDLE WINDOW RESIZE ——————
-      window.addEventListener('resize', () => {
-        updateCanvasSize();
-        distribuirEnRejilla();
-      });
-
     });
   </script>
+  
+  
+  
+  
 </body>
 
 </html>
